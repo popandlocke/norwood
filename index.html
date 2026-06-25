@@ -52,7 +52,7 @@
             width: auto !important;
             height: auto !important;
             aspect-ratio: 3 / 4;
-            background-color: #ffffff; /* Restored clean white background */
+            background-color: #ffffff; 
             border-radius: 16px;
             box-shadow: 0 8px 30px rgba(0,0,0,0.06);
             display: block;
@@ -191,34 +191,33 @@
         Runner.run(runner, engine);
 
         // --- Board Mathematics & Alignment ---
-        const wallThickness = 12; // Uniform thickness for ALL outer walls
+        const wallThickness = 12; 
         const baseThickness = 20; 
         const troughCount = 9;
         const usableWidth = LOGICAL_WIDTH - (wallThickness * 2);
         const troughWidth = usableWidth / troughCount; 
 
-        // Trough Sizing: Inner walls are 80% of outer walls
+        // Trough Sizing
         const floorY = LOGICAL_HEIGHT - baseThickness;
         const troughOuterHeight = 175;
         const innerWallHeight = troughOuterHeight * 0.8; 
         const transitionY = floorY - troughOuterHeight; 
 
-        // Peg Grid Mapping
+        // Peg Grid Mapping (Dynamically Stretched)
         const spacingX = troughWidth; 
-        const spacingY = 44;
-        const bottomRowY = transitionY - 30; 
-        const topPegY = bottomRowY - ((TOTAL_ROWS - 1) * spacingY); 
         const topPegX = LOGICAL_WIDTH / 2; 
+        const topPegY = 267; // Locked relative to tube and frame layout
+        const bottomRowY = transitionY; // Exact alignment with funnel/wall corner
+        const spacingY = (bottomRowY - topPegY) / (TOTAL_ROWS - 1); 
 
         // Feeder Tube Profile 
-        // Array pushed down relative to tube by making tubeBottomY higher
         const tubeBottomY = topPegY - 65; 
-        const triangleHeight = (TOTAL_ROWS - 1) * spacingY; 
-        const tubeHeight = triangleHeight * 0.10; // Exactly 10% of triangle height
+        const triangleHeight = bottomRowY - topPegY; 
+        const tubeHeight = triangleHeight * 0.10; 
         const tubeWidth = 36;
         const tubeTopY = tubeBottomY - tubeHeight; 
 
-        // Standby Box (Double Capacity for Game Time)
+        // Standby Box 
         const boxW = 180;
         const boxH = 92; 
         const boxX = LOGICAL_WIDTH - boxW/2 - 20; 
@@ -256,8 +255,7 @@
                 Bodies.rectangle(topPegX + tubeWidth/2 + wallThickness/2, tubeBottomY - tubeHeight/2, wallThickness, tubeHeight, wallStyle)
             ]);
 
-            // 5. Perfectly Mathematical Funnels (Rotated Rectangles ensure 100% uniform thickness)
-            // Left Funnel
+            // 5. Perfectly Mathematical Funnels
             let lx1 = wallThickness/2, ly1 = transitionY;
             let lx2 = topPegX - tubeWidth/2 - wallThickness/2, ly2 = tubeBottomY;
             let lcx = (lx1 + lx2)/2, lcy = (ly1 + ly2)/2;
@@ -266,7 +264,6 @@
             let langle = Math.atan2(ldy, ldx);
             Composite.add(engine.world, Bodies.rectangle(lcx, lcy, llen, wallThickness, { isStatic: true, angle: langle, render: { fillStyle: wallColor } }));
 
-            // Right Funnel
             let rx1 = LOGICAL_WIDTH - wallThickness/2, ry1 = transitionY;
             let rx2 = topPegX + tubeWidth/2 + wallThickness/2, ry2 = tubeBottomY;
             let rcx = (rx1 + rx2)/2, rcy = (ry1 + ry2)/2;
@@ -275,7 +272,7 @@
             let rangle = Math.atan2(rdy, rdx);
             Composite.add(engine.world, Bodies.rectangle(rcx, rcy, rlen, wallThickness, { isStatic: true, angle: rangle, render: { fillStyle: wallColor } }));
 
-            // 6. Round Joints: These pure circles act as glue, erasing any jagged corners where rectangles meet!
+            // 6. Round Joints
             Composite.add(engine.world, [
                 Bodies.circle(wallThickness/2, transitionY, wallThickness/2, wallStyle), 
                 Bodies.circle(LOGICAL_WIDTH - wallThickness/2, transitionY, wallThickness/2, wallStyle),
@@ -380,7 +377,6 @@
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             
-            // FIX: lineJoin 'round' stops the sharp "miter spike" bug on numbers like 2
             ctx.lineJoin = 'round';
             ctx.strokeStyle = '#000000';
             ctx.lineWidth = 2.0;
@@ -394,7 +390,6 @@
 
         // --- Game Logistics & Inventory Generation ---
         function loadYear(yearNumber) {
-            // Note: clearActiveBalls() intentionally removed here so balls are persistent across level switches
             queuePool = [];
             let buildArray = [];
 
@@ -424,7 +419,6 @@
 
             queuePool = buildArray;
 
-            // Clear any active Game Time interval to prevent spamming speedups
             if (window.gameTimeInterval) clearInterval(window.gameTimeInterval);
             
             if (yearNumber === 4) {
@@ -443,7 +437,8 @@
             const releasedType = queuePool.shift();
             
             const startX = topPegX;
-            const startY = tubeTopY - 10; 
+            // Spawn EXACTLY at the visual waiting location
+            const startY = tubeBottomY - 15; 
             
             const liveBall = Bodies.circle(startX, startY, BALL_RADIUS, {
                 restitution: RESTITUTION,
@@ -526,11 +521,10 @@
 
             // 4. Standby Queues
             if (queuePool.length > 0) {
-                // Ball ready in the short tube
+                // Ball visual waiting location (mapped to identical drop coords)
                 drawVisualBall(ctx, topPegX, tubeBottomY - 15, queuePool[0]);
             }
 
-            // Ball dense-packing logic to fit 50 elements into the box
             const startX = boxX - boxW/2 + 13;
             const startY = boxY + boxH - 13;
 
