@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Responsive Plinko Prototype</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #f2f2f7; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            color: #1c1c1e; 
+            touch-action: none; 
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        #app-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            max-width: 800px; 
+            padding: 10px;
+            box-sizing: border-box;
+            gap: 12px;
+        }
+
+        #canvas-wrapper {
+            flex: 1;
+            width: 100%;
+            min-height: 0; 
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        canvas {
+            max-width: 100% !important;
+            max-height: 100% !important;
+            width: auto !important;
+            height: auto !important;
+            aspect-ratio: 3 / 4;
+            background-color: #ffffff; /* Restored clean white background */
+            border-radius: 16px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.06);
+            display: block;
+        }
+
+        /* Bottom Control Dashboard */
+        #dashboard {
+            display: flex;
+            flex-direction: row;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            background: #ffffff;
+            border-radius: 12px;
+            padding: 8px 12px;
+            box-sizing: border-box;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
+            flex-shrink: 0; 
+            gap: 10px;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 6px;
+        }
+
+        button {
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: opacity 0.15s ease, transform 0.1s ease;
+            touch-action: manipulation;
+            font-family: inherit;
+        }
+        button:hover { opacity: 0.85; }
+        button:active { transform: scale(0.96); }
+
+        .btn-year {
+            background-color: #34c759;
+            color: white;
+            padding: 12px 14px;
+            font-size: 14px;
+        }
+        .btn-year.gametime {
+            background-color: #af52de;
+        }
+
+        .btn-drop {
+            background-color: #007aff; 
+            color: white;
+            padding: 14px 32px;
+            font-size: 18px;
+            flex-grow: 1;
+            margin: 0 10px;
+            max-width: 200px;
+        }
+
+        .btn-utility {
+            background-color: #e5e5ea; 
+            color: #ff3b30; 
+            padding: 12px 14px;
+            font-size: 13px;
+        }
+        .btn-utility.reset { color: #ff9500; }
+
+        @media (max-width: 500px) {
+            .btn-year { padding: 10px 12px; font-size: 13px; }
+            .btn-drop { padding: 12px 20px; font-size: 16px; margin: 0 5px; }
+            .btn-utility { padding: 10px 10px; font-size: 12px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-container">
+        <div id="canvas-wrapper"></div>
+        
+        <div id="dashboard">
+            <div class="btn-group">
+                <button class="btn-year" onclick="loadYear(1)">Y1</button>
+                <button class="btn-year" onclick="loadYear(2)">Y2</button>
+                <button class="btn-year" onclick="loadYear(3)">Y3</button>
+                <button class="btn-year gametime" onclick="loadYear(4)">GT</button>
+            </div>
+
+            <button class="btn-drop" onclick="releaseNextBall()">Drop Ball</button>
+
+            <div class="btn-group">
+                <button class="btn-utility" onclick="clearActiveBalls()">Clear</button>
+                <button class="btn-utility reset" onclick="resetFlaps()">Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Logical Physics Dimensions ---
+        const LOGICAL_WIDTH = 600;
+        const LOGICAL_HEIGHT = 800;
+        
+        const BALL_RADIUS = 8.5; 
+        const PEG_RADIUS = 6.0; 
+        const TOTAL_ROWS = 8;
+        
+        const RESTITUTION = 0.42; 
+        const FRICTION = 0.03;
+        const GRAVITY = 1.0;
+
+        const BALL_TYPES = {
+            green:  { color: '#34c759', value: '2' },
+            blue:   { color: '#007aff', value: '3' },
+            purple: { color: '#af52de', value: '4' },
+            red:    { color: '#ff3b30', value: '6' },
+            gold:   { color: '#ffcc00', value: '8' }
+        };
+
+        // --- Matter.js Engine Setup ---
+        const { Engine, Render, Runner, Bodies, Composite, Body, Vector, Events } = Matter;
+        const engine = Engine.create({ gravity: { y: GRAVITY } });
+        const wrapper = document.getElementById('canvas-wrapper');
+        
+        const render = Render.create({
+            element: wrapper,
+            engine: engine,
+            options: {
+                width: LOGICAL_WIDTH,
+                height: LOGICAL_HEIGHT,
+                wireframes: false, 
+                background: 'transparent', 
+                pixelRatio: window.devicePixelRatio 
+            }
+        });
+
+        Render.run(render);
+        const runner = Runner.create();
+        Runner.run(runner, engine);
+
+        // --- Board Mathematics & Alignment ---
+        const wallThickness = 12; // Uniform thickness for ALL outer walls
+        const baseThickness = 20; 
+        const troughCount = 9;
+        const usableWidth = LOGICAL_WIDTH - (wallThickness * 2);
+        const troughWidth = usableWidth / troughCount; 
+
+        // Trough Sizing: Inner walls are 80% of outer walls
+        const floorY = LOGICAL_HEIGHT - baseThickness;
+        const troughOuterHeight = 175;
+        const innerWallHeight = troughOuterHeight * 0.8; 
+        const transitionY = floorY - troughOuterHeight; 
+
+        // Peg Grid Mapping
+        const spacingX = troughWidth; 
+        const spacingY = 44;
+        const bottomRowY = transitionY - 30; 
+        const topPegY = bottomRowY - ((TOTAL_ROWS - 1) * spacingY); 
+        const topPegX = LOGICAL_WIDTH / 2; 
+
+        // Feeder Tube Profile 
+        // Array pushed down relative to tube by making tubeBottomY higher
+        const tubeBottomY = topPegY - 65; 
+        const triangleHeight = (TOTAL_ROWS - 1) * spacingY; 
+        const tubeHeight = triangleHeight * 0.10; // Exactly 10% of triangle height
+        const tubeWidth = 36;
+        const tubeTopY = tubeBottomY - tubeHeight; 
+
+        // Standby Box (Double Capacity for Game Time)
+        const boxW = 180;
+        const boxH = 92; 
+        const boxX = LOGICAL_WIDTH - boxW/2 - 20; 
+        const boxY = tubeBottomY - boxH; 
+
+        let marketPegs = []; 
+        let physicsBalls = [];  
+        let queuePool = [];     
+
+        // --- Seamless, Jagged-Free Frame Assembly ---
+        function buildFrame() {
+            const wallColor = '#d1d1d6';
+            const wallStyle = { isStatic: true, render: { fillStyle: wallColor } };
+            const divStyle = { isStatic: true, render: { fillStyle: '#e5e5ea', strokeStyle: '#d1d1d6', lineWidth: 1 } };
+
+            // 1. Floor
+            Composite.add(engine.world, Bodies.rectangle(LOGICAL_WIDTH/2, floorY + wallThickness/2, LOGICAL_WIDTH, wallThickness, wallStyle));
+
+            // 2. Outer Troughs
+            Composite.add(engine.world, [
+                Bodies.rectangle(wallThickness/2, floorY - troughOuterHeight/2, wallThickness, troughOuterHeight, wallStyle),
+                Bodies.rectangle(LOGICAL_WIDTH - wallThickness/2, floorY - troughOuterHeight/2, wallThickness, troughOuterHeight, wallStyle)
+            ]);
+
+            // 3. Exact Division Inner Troughs
+            for (let i = 1; i < troughCount; i++) {
+                const x = wallThickness + i * troughWidth;
+                const y = floorY - (innerWallHeight / 2);
+                Composite.add(engine.world, Bodies.rectangle(x, y, 4, innerWallHeight, divStyle));
+            }
+
+            // 4. Feeder Tube Walls
+            Composite.add(engine.world, [
+                Bodies.rectangle(topPegX - tubeWidth/2 - wallThickness/2, tubeBottomY - tubeHeight/2, wallThickness, tubeHeight, wallStyle),
+                Bodies.rectangle(topPegX + tubeWidth/2 + wallThickness/2, tubeBottomY - tubeHeight/2, wallThickness, tubeHeight, wallStyle)
+            ]);
+
+            // 5. Perfectly Mathematical Funnels (Rotated Rectangles ensure 100% uniform thickness)
+            // Left Funnel
+            let lx1 = wallThickness/2, ly1 = transitionY;
+            let lx2 = topPegX - tubeWidth/2 - wallThickness/2, ly2 = tubeBottomY;
+            let lcx = (lx1 + lx2)/2, lcy = (ly1 + ly2)/2;
+            let ldx = lx2 - lx1, ldy = ly2 - ly1;
+            let llen = Math.sqrt(ldx*ldx + ldy*ldy);
+            let langle = Math.atan2(ldy, ldx);
+            Composite.add(engine.world, Bodies.rectangle(lcx, lcy, llen, wallThickness, { isStatic: true, angle: langle, render: { fillStyle: wallColor } }));
+
+            // Right Funnel
+            let rx1 = LOGICAL_WIDTH - wallThickness/2, ry1 = transitionY;
+            let rx2 = topPegX + tubeWidth/2 + wallThickness/2, ry2 = tubeBottomY;
+            let rcx = (rx1 + rx2)/2, rcy = (ry1 + ry2)/2;
+            let rdx = rx2 - rx1, rdy = ry2 - ry1;
+            let rlen = Math.sqrt(rdx*rdx + rdy*rdy);
+            let rangle = Math.atan2(rdy, rdx);
+            Composite.add(engine.world, Bodies.rectangle(rcx, rcy, rlen, wallThickness, { isStatic: true, angle: rangle, render: { fillStyle: wallColor } }));
+
+            // 6. Round Joints: These pure circles act as glue, erasing any jagged corners where rectangles meet!
+            Composite.add(engine.world, [
+                Bodies.circle(wallThickness/2, transitionY, wallThickness/2, wallStyle), 
+                Bodies.circle(LOGICAL_WIDTH - wallThickness/2, transitionY, wallThickness/2, wallStyle),
+                Bodies.circle(topPegX - tubeWidth/2 - wallThickness/2, tubeBottomY, wallThickness/2, wallStyle), 
+                Bodies.circle(topPegX + tubeWidth/2 + wallThickness/2, tubeBottomY, wallThickness/2, wallStyle)
+            ]);
+        }
+
+        // --- Custom Peg Engineering ---
+        class MarketPeg {
+            constructor(x, y) {
+                this.originX = x;
+                this.originY = y;
+                this.state = 0; 
+                this.angles = [0, -20 * (Math.PI / 180), 20 * (Math.PI / 180)];
+                
+                this.currentVisualAngle = 0;
+                this.animationSpeed = 0.25; 
+
+                const rodLength = 17;  
+                const rodWidth = 5.0;    
+
+                const invis = { isStatic: true, render: { fillStyle: 'transparent', strokeStyle: 'transparent' } };
+
+                this.peg = Bodies.circle(x, y, PEG_RADIUS, invis);
+                this.flapStem = Bodies.rectangle(x, y - rodLength / 2, rodWidth, rodLength, invis);
+                this.flapTip = Bodies.circle(x, y - rodLength, rodWidth / 2, invis);
+                
+                this.body = Body.create({ parts: [this.peg, this.flapStem, this.flapTip], isStatic: true });
+
+                this.body.render.element = (ctx) => {
+                    const targetAngle = this.body.angle;
+                    this.currentVisualAngle += (targetAngle - this.currentVisualAngle) * this.animationSpeed;
+
+                    ctx.save();
+                    ctx.translate(this.originX, this.originY);
+                    ctx.rotate(this.currentVisualAngle);
+
+                    ctx.beginPath();
+                    ctx.lineWidth = rodWidth;
+                    ctx.lineCap = 'round';
+                    ctx.strokeStyle = '#ffcc00'; 
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(0, -rodLength);
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.arc(0, 0, PEG_RADIUS, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#8e8e93'; 
+                    ctx.fill();
+                    
+                    ctx.beginPath();
+                    ctx.arc(0, 0, PEG_RADIUS - 1.5, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#ffffff'; 
+                    ctx.fill();
+
+                    ctx.restore();
+                };
+
+                Composite.add(engine.world, this.body);
+            }
+
+            cycleState() {
+                this.state = (this.state + 1) % 3;
+                Body.setAngle(this.body, this.angles[this.state]);
+            }
+
+            reset() {
+                this.state = 0;
+                Body.setAngle(this.body, 0);
+            }
+        }
+
+        function buildPegGrid() {
+            for (let row = 0; row < TOTAL_ROWS; row++) {
+                const pegsInRow = row + 1;
+                const rowWidth = (pegsInRow - 1) * spacingX;
+                const startX = (LOGICAL_WIDTH - rowWidth) / 2;
+                const y = topPegY + row * spacingY;
+
+                for (let col = 0; col < pegsInRow; col++) {
+                    const x = startX + col * spacingX;
+                    marketPegs.push(new MarketPeg(x, y));
+                }
+            }
+        }
+
+        // --- Universal Draw Function for Balls ---
+        function drawVisualBall(ctx, x, y, typeKey) {
+            const config = BALL_TYPES[typeKey];
+            if (!config) return;
+
+            ctx.save();
+            ctx.translate(x, y);
+
+            ctx.beginPath();
+            ctx.arc(0, 0, BALL_RADIUS, 0, 2 * Math.PI);
+            ctx.fillStyle = config.color;
+            ctx.fill();
+
+            ctx.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // FIX: lineJoin 'round' stops the sharp "miter spike" bug on numbers like 2
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 2.0;
+            ctx.strokeText(config.value, 0, 0);
+            
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(config.value, 0, 0);
+
+            ctx.restore();
+        }
+
+        // --- Game Logistics & Inventory Generation ---
+        function loadYear(yearNumber) {
+            // Note: clearActiveBalls() intentionally removed here so balls are persistent across level switches
+            queuePool = [];
+            let buildArray = [];
+
+            if (yearNumber === 1) {
+                for(let i=0; i<10; i++) { buildArray.push('green'); buildArray.push('blue'); }
+                buildArray.sort(() => Math.random() - 0.5);
+            } 
+            else if (yearNumber === 2) {
+                let pool = [];
+                for(let i=0; i<10; i++) { pool.push('green'); pool.push('blue'); pool.push('purple'); }
+                pool.sort(() => Math.random() - 0.5);
+                buildArray = pool.slice(0, 20);
+            } 
+            else if (yearNumber === 3) {
+                let pool = [];
+                for(let i=0; i<10; i++) { pool.push('green'); pool.push('blue'); pool.push('purple'); pool.push('red'); }
+                pool.sort(() => Math.random() - 0.5);
+                buildArray = pool.slice(0, 20);
+            } 
+            else if (yearNumber === 4) {
+                for(let i=0; i<10; i++) {
+                    buildArray.push('green'); buildArray.push('blue'); buildArray.push('purple'); 
+                    buildArray.push('red'); buildArray.push('gold');
+                }
+                buildArray.sort(() => Math.random() - 0.5);
+            }
+
+            queuePool = buildArray;
+
+            // Clear any active Game Time interval to prevent spamming speedups
+            if (window.gameTimeInterval) clearInterval(window.gameTimeInterval);
+            
+            if (yearNumber === 4) {
+                window.gameTimeInterval = setInterval(() => {
+                    if (queuePool.length === 0) {
+                        clearInterval(window.gameTimeInterval);
+                        return;
+                    }
+                    fireDrop();
+                }, 180); 
+            }
+        }
+
+        function fireDrop() {
+            if (queuePool.length === 0) return;
+            const releasedType = queuePool.shift();
+            
+            const startX = topPegX;
+            const startY = tubeTopY - 10; 
+            
+            const liveBall = Bodies.circle(startX, startY, BALL_RADIUS, {
+                restitution: RESTITUTION,
+                friction: FRICTION,
+                density: 0.002,
+                render: { visible: false } 
+            });
+
+            liveBall.ballType = releasedType;
+            liveBall.ballValue = BALL_TYPES[releasedType].value;
+
+            const biasX = (Math.random() - 0.5) * 0.35; 
+            Body.setVelocity(liveBall, { x: biasX, y: 0.1 });
+
+            physicsBalls.push(liveBall);
+            Composite.add(engine.world, liveBall);
+        }
+
+        function releaseNextBall() {
+            fireDrop();
+        }
+
+        function clearActiveBalls() {
+            physicsBalls.forEach(ball => Composite.remove(engine.world, ball));
+            physicsBalls = [];
+        }
+
+        function resetFlaps() {
+            marketPegs.forEach(peg => peg.reset());
+        }
+
+        // --- Responsive Coordinate Projection ---
+        function handleInteraction(clientX, clientY) {
+            const canvasElement = render.canvas;
+            if (!canvasElement) return; 
+            
+            const rect = canvasElement.getBoundingClientRect();
+            const scaleX = LOGICAL_WIDTH / rect.width;
+            const scaleY = LOGICAL_HEIGHT / rect.height;
+
+            const logicalX = (clientX - rect.left) * scaleX;
+            const logicalY = (clientY - rect.top) * scaleY;
+
+            marketPegs.forEach(marketPeg => {
+                const dist = Vector.magnitude(Vector.sub({ x: logicalX, y: logicalY }, { x: marketPeg.originX, y: marketPeg.originY }));
+                if (dist < 26) { 
+                    marketPeg.cycleState();
+                }
+            });
+        }
+
+        buildFrame();
+        buildPegGrid();
+        loadYear(1); 
+
+        // --- Core Paint Loop ---
+        Events.on(render, 'afterRender', () => {
+            const ctx = render.context;
+
+            // 1. Storage Box Background
+            ctx.save();
+            ctx.fillStyle = '#e5e5ea';
+            ctx.strokeStyle = '#d1d1d6';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.roundRect(boxX - boxW/2, boxY, boxW, boxH, 8);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            // 2. Interactive Pegs
+            marketPegs.forEach(marketPeg => {
+                if (marketPeg.body.render.element) marketPeg.body.render.element(ctx);
+            });
+
+            // 3. Falling/Resting Physics Balls
+            physicsBalls.forEach(ball => {
+                drawVisualBall(ctx, ball.position.x, ball.position.y, ball.ballType);
+            });
+
+            // 4. Standby Queues
+            if (queuePool.length > 0) {
+                // Ball ready in the short tube
+                drawVisualBall(ctx, topPegX, tubeBottomY - 15, queuePool[0]);
+            }
+
+            // Ball dense-packing logic to fit 50 elements into the box
+            const startX = boxX - boxW/2 + 13;
+            const startY = boxY + boxH - 13;
+
+            for (let i = 1; i < queuePool.length; i++) {
+                const itemIndex = i - 1;
+                const col = itemIndex % 10; 
+                const row = Math.floor(itemIndex / 10);
+
+                const drawX = startX + (col * 17);
+                const drawY = startY - (row * 17);
+
+                drawVisualBall(ctx, drawX, drawY, queuePool[i]);
+            }
+        });
+
+        // --- Interaction Binding ---
+        window.addEventListener('mousedown', (e) => {
+            handleInteraction(e.clientX, e.clientY);
+        });
+
+        window.addEventListener('touchstart', (e) => {
+            if (e.touches && e.touches[0]) {
+                if (e.target === render.canvas) e.preventDefault();
+                handleInteraction(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: false });
+
+    </script>
+</body>
+</html>
