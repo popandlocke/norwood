@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Plinko Prototype</title>
+    <title>On Draft Plinko Board</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
         body {
@@ -240,9 +240,6 @@
         
         const spacingX = troughWidth; 
         const topPegX = LOGICAL_WIDTH / 2; 
-        
-        // MOVED DOWN: Adjusted top row downwards to clear the feeder tube safely. 
-        // This naturally compresses the rest of the rows slightly while keeping them evenly spaced.
         const topPegY = tubeBottomY + 53; 
         const bottomRowY = transitionY; 
         const spacingY = (bottomRowY - topPegY) / (TOTAL_ROWS - 1); 
@@ -338,7 +335,6 @@
                     ctx.translate(this.originX, this.originY);
                     ctx.rotate(this.currentVisualAngle);
 
-                    // Minimal Vector Tap Handle Neck (Significantly slimmed to match hitbox)
                     ctx.beginPath();
                     ctx.moveTo(-2.5, 0);
                     ctx.lineTo(-3.5, -rodLength + 6);
@@ -352,7 +348,6 @@
                     ctx.fillStyle = '#8a5a36'; 
                     ctx.fill();
 
-                    // Tap Handle Oval Badge Top (Shrunk down proportionally)
                     ctx.beginPath();
                     ctx.ellipse(0, -rodLength, 6.5, 5, 0, 0, 2 * Math.PI);
                     ctx.fillStyle = '#d4af37'; 
@@ -362,7 +357,6 @@
                     ctx.fillStyle = '#6e4726'; 
                     ctx.fill();
 
-                    // Smooth Mechanical Core Peg Pivot
                     ctx.beginPath();
                     ctx.arc(0, 0, PEG_RADIUS, 0, 2 * Math.PI);
                     ctx.fillStyle = '#4a4a4a'; 
@@ -510,6 +504,30 @@
 
             const logicalX = (clientX - rect.left) * scaleX;
             const logicalY = (clientY - rect.top) * scaleY;
+
+            // 1. Trough Ball Removal Check
+            let clickedBallIndex = -1;
+            for (let i = 0; i < physicsBalls.length; i++) {
+                const ball = physicsBalls[i];
+                // Only allow removal if the ball is within the trough region
+                if (ball.position.y > transitionY) {
+                    const dist = Math.hypot(logicalX - ball.position.x, logicalY - ball.position.y);
+                    // Hit radius is the ball size + 15px extra for easy tapping on mobile
+                    if (dist <= BALL_RADIUS + 5) {
+                        clickedBallIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            // If a ball was clicked, remove it from the engine and the array, then exit the click event
+            if (clickedBallIndex !== -1) {
+                Composite.remove(engine.world, physicsBalls[clickedBallIndex]);
+                physicsBalls.splice(clickedBallIndex, 1);
+                return; 
+            }
+
+            // 2. Interactive Windows / Pegs check
             const h = windowSizeHalf;
 
             marketPegs.forEach(peg => {
